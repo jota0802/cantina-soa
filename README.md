@@ -4,14 +4,15 @@ Laboratório de Arquitetura Orientada a Serviços (FIAP · CheckPoint 3). A cant
 recebe pedidos pelo celular e avisa quando o pedido é confirmado. O sistema tem três serviços
 pequenos, e o que liga um ao outro é só o contrato.
 
-| Serviço | O que faz | Linguagem |
-|---|---|---|
-| **Cardápio** | Informa o que há para vender | Python 3 (biblioteca padrão) |
-| **Pedidos** | Registra a compra consultando o Cardápio | Node.js (biblioteca padrão) |
-| **Avisos** | Reage quando um pedido é confirmado | Go (biblioteca padrão) |
+| Serviço | O que faz | Linguagem | Porta |
+|---|---|---|---|
+| **Cardápio** | Informa o que há para vender | Python 3 (biblioteca padrão) | 8081 (segunda instância na 8091) |
+| **Pedidos** | Registra a compra consultando o Cardápio e publica o evento de pedido confirmado | Node.js (biblioteca padrão) | 8082 |
+| **Avisos** | Reage quando um pedido é confirmado | Go (biblioteca padrão) | 8083 (segundo assinante na 8084) |
 
 Cada serviço está em uma linguagem diferente de propósito: se o contrato basta para eles se
-entenderem, nenhum precisa saber como o outro foi escrito.
+entenderem, nenhum precisa saber como o outro foi escrito. Os serviços não dividem código, banco
+nem arquivo. O contrato é a única coisa em comum.
 
 ## Grupo
 
@@ -23,46 +24,267 @@ entenderem, nenhum precisa saber como o outro foi escrito.
 | Rodrigo Jimenez | 558148 |
 | Bruno Leão | 555563 |
 
-## Estrutura
-
-```
-cantina-soa/
-├── contratos/       os contratos, antes do código
-├── servicos/
-│   ├── cardapio/
-│   ├── pedidos/
-│   └── avisos/
-├── arquitetura/     fonte e imagem do desenho
-├── evidencias/      saídas dos testes de cada missão
-└── README.md        como rodar + matriz de princípios
-```
-
 ## Como rodar
 
-Pré-requisitos: Python 3.9+, Node.js 18+ e `curl`. Nenhum `pip install` ou `npm install`: os
-serviços usam só a biblioteca padrão. Rode cada serviço em um terminal, a partir da raiz do
-repositório.
+Pré-requisitos: Python 3.9+, Node.js 18+, Go 1.21+ e `curl`. Nada para instalar com `pip`,
+`npm` ou `go get`: os três serviços usam só a biblioteca padrão. Todos os comandos abaixo partem
+da raiz do repositório.
+
+### Atalho: os três de uma vez
 
 ```bash
-# Cardápio (duas instâncias, para mostrar que não guardam estado)
+bash scripts/subir.sh
+```
+
+Sobe o Cardápio (8081), o Avisos (8083) e o Pedidos (8082) num terminal só, com o Pedidos já
+publicando para o Avisos. Cada linha de log sai com o nome do serviço na frente. `Ctrl+C` derruba
+os três. Os dados do Pedidos ficam numa pasta temporária, então cada subida começa do pedido 1.
+No Windows, rode pelo Git Bash.
+
+Os scripts (`subir.sh` e os das missões) usam as portas oficiais, mas cada uma muda por variável:
+`PORTA_CARDAPIO` (8081), `PORTA_CARDAPIO2` (8091), `PORTA_PEDIDOS` (8082), `PORTA_AVISOS` (8083)
+e `PORTA_AVISOS2` (8084), cada script lendo as que usa. Ex.: `PORTA_PEDIDOS=9082 bash scripts/subir.sh`.
+
+### Um serviço por terminal (bash: Linux, macOS, Git Bash, Codespaces)
+
+Nesta ordem, cada comando no seu terminal:
+
+```bash
+# 1. Cardápio, duas instâncias (a segunda mostra que ele não guarda estado)
 PORTA=8081 python3 servicos/cardapio/app.py
 PORTA=8091 python3 servicos/cardapio/app.py
 
-# Pedidos
-PORTA=8082 CARDAPIO_URL=http://localhost:8081 node servicos/pedidos/server.js
+# 2. Avisos, dois assinantes (o segundo só muda o nome no log)
+cd servicos/avisos && PORTA=8083 go run .
+cd servicos/avisos && PORTA=8084 NOME=avisos-2 go run .
+
+# 3. Pedidos, apontando para o Cardápio e para os dois Avisos
+PORTA=8082 CARDAPIO_URL=http://localhost:8081 \
+  ASSINANTES=http://localhost:8083/eventos,http://localhost:8084/eventos \
+  node servicos/pedidos/server.js
 ```
 
-No PowerShell, defina as variáveis antes (`$env:PORTA="8081"; python servicos/cardapio/app.py`)
-e use `curl.exe` nos testes.
+Neste modo os pedidos ficam guardados em `servicos/pedidos/dados/` (`pedidos.json` e
+`outbox.json`) e continuam lá de uma subida para outra, então o número do pedido segue a
+sequência (o exemplo abaixo pode não dar o pedido 1). Para recomeçar do pedido 1, pare o Pedidos
+e apague a pasta `servicos/pedidos/dados/`. Ela não vai para o Git (`.gitignore`).
 
-Testes das missões, com os serviços no ar: `bash scripts/missao2.sh` e `bash scripts/missao3.sh`.
-As saídas ficam em `evidencias/`.
+### PowerShell (Windows)
+
+Os comandos de PowerShell não foram testados pelo grupo numa máquina Windows. Lá o Python costuma
+se chamar `python`, as variáveis são definidas com `$env:` e o `curl` de verdade é o `curl.exe`.
+
+```powershell
+# 1. Cardápio
+$env:PORTA="8081"; python servicos/cardapio/app.py
+$env:PORTA="8091"; python servicos/cardapio/app.py
+
+# 2. Avisos
+cd servicos\avisos; $env:PORTA="8083"; go run .
+cd servicos\avisos; $env:PORTA="8084"; $env:NOME="avisos-2"; go run .
+
+# 3. Pedidos
+$env:PORTA="8082"; $env:CARDAPIO_URL="http://localhost:8081"; $env:ASSINANTES="http://localhost:8083/eventos,http://localhost:8084/eventos"; node servicos/pedidos/server.js
+```
+
+### Um pedido de exemplo
+
+```bash
+curl -i -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data @servicos/pedidos/pedido.json
+```
+
+No PowerShell: `curl.exe -i -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data "@servicos/pedidos/pedido.json"`.
+
+A resposta é `201` com `totalCentavos` 2500 (2 coxinhas e 1 suco). No terminal do Avisos
+aparece `[avisos] Pedido 1 confirmado, total R$ 25,00`, e no do segundo, a mesma linha com
+`[avisos-2]` (o número do pedido pode ser outro se `servicos/pedidos/dados/` já tinha pedidos).
+Para consultar o pedido, use o número do header `Location`, como
+`curl -i http://localhost:8082/pedidos/1`.
+
+### Variáveis de ambiente
+
+| Serviço | Variável | Obrigatória | Padrão | Para quê |
+|---|---|---|---|---|
+| Cardápio | `PORTA` | sim | nenhum | Porta em que o serviço escuta |
+| Pedidos | `PORTA` | sim | nenhum | Porta em que o serviço escuta |
+| Pedidos | `CARDAPIO_URL` | sim | nenhum | Raiz do Cardápio, como `http://localhost:8081` (sem `/itens`) |
+| Pedidos | `ASSINANTES` | não | vazia: não publica nada | Endereços que recebem o evento, separados por vírgula |
+| Pedidos | `REENVIO_MS` | não | `3000` (mínimo 100) | Quanto esperar, em milissegundos, depois de uma tentativa de entrega que falhou (contando do fim dela) antes da próxima. Não é um relógio fixo |
+| Pedidos | `DADOS_DIR` | não | `servicos/pedidos/dados` | Pasta do `pedidos.json` e do `outbox.json` |
+| Avisos | `PORTA` | sim | nenhum | Porta em que o serviço escuta |
+| Avisos | `NOME` | não | `avisos` | Nome da instância, entre colchetes, no começo de cada log |
+
+Detalhes de cada serviço: [Cardápio](servicos/cardapio/README.md),
+[Pedidos](servicos/pedidos/README.md) e [Avisos](servicos/avisos/README.md).
+
+## Contratos
+
+| Arquivo | O que descreve |
+|---|---|
+| [`contratos/cardapio.yaml`](contratos/cardapio.yaml) | OpenAPI do Cardápio: `GET /itens`, `GET /itens/{id}` e `GET /saude`. É o padrão da turma, igual em todos os grupos |
+| [`contratos/pedidos.yaml`](contratos/pedidos.yaml) | OpenAPI do Pedidos (versão 1.1.1): `POST /pedidos`, `GET /pedidos/{id}`, `GET /saude` e os erros `400`, `404`, `422` e `503` |
+| [`contratos/pedido-confirmado.json`](contratos/pedido-confirmado.json) | Exemplo do evento `cantina.pedido.confirmado`, no envelope CloudEvents 1.0, com `pedidoId` e `totalCentavos` (o formato do enunciado) |
+| [`contratos/pedido-confirmado.schema.json`](contratos/pedido-confirmado.schema.json) | As regras do mesmo evento em JSON Schema 2020-12: atributos obrigatórios do envelope e tipos, `type` sempre `cantina.pedido.confirmado`, `pedidoId` inteiro a partir de 1 e `totalCentavos` inteiro a partir de 0, em centavos. O par `source` + `id` identifica o evento e é o que o Avisos usa para deduplicar |
+| [`contratos/avisos.yaml`](contratos/avisos.yaml) | OpenAPI do Avisos: o `POST /eventos` da Trilha A, com `202` (inclusive para evento repetido e tipo desconhecido), `400` e `413` |
+
+Os contratos vieram antes do código. O histórico do Git mostra isso: a tag `entrega-1` tem os três
+primeiros contratos (`cardapio.yaml`, `pedidos.yaml` e `pedido-confirmado.json`), o README e o
+desenho inicial, e nenhuma linha de código. O `avisos.yaml` (com o schema do evento) entrou na
+Entrega 4, num commit anterior ao do código do Avisos.
+
+O `pedidos.yaml` subiu para a 1.1.0 num commit anterior ao do código do Pedidos. As respostas
+das rotas não mudaram, mas o corpo do pedido ganhou limites: no máximo 20 itens e quantidade de 1
+a 1000. Por isso a mudança não é 100% compatível: um pedido que antes era aceito, com 21 itens
+ou 5000 unidades, agora recebe `400`. Isso só afeta pedidos fora do razoável para uma cantina. O
+enum de `codigo` também ganhou três valores (`rota_inexistente`, `metodo_nao_permitido` e
+`erro_interno`), usados só fora das rotas do contrato. A 1.1.1 só documentou o limite de 1 MiB do
+corpo, que o código já aplicava.
+
+Regra do grupo: se o código e o contrato discordam, o código está errado.
+
+## Testes e evidências
+
+Cada script grava a saída em `evidencias/`. Os das missões 2 e 3 precisam dos serviços no ar;
+o da Missão 4 sobe e derruba tudo sozinho.
+
+| Missão | Script | Evidência | O que prova |
+|---|---|---|---|
+| 2 | [`scripts/missao2.sh`](scripts/missao2.sh) | [`evidencias/missao2.txt`](evidencias/missao2.txt) | O Cardápio segue o contrato: lista, item, `404` de item inexistente, `/saude`, e as instâncias 8081 e 8091 respondem igual |
+| 3 | [`scripts/missao3.sh`](scripts/missao3.sh) | [`evidencias/missao3.txt`](evidencias/missao3.txt) | O Pedidos compõe o Cardápio: `201` com total 2500, consulta do pedido, `422` para item indisponível e inexistente (sem criar pedido). Depois, os modos `cardapio-fora` (`503` na hora) e `cardapio-lento` (um simulador ocupa a porta do Cardápio, aceita a conexão e nunca responde: `503` em cerca de 2 s), os dois gerados pelo script |
+| 4 | [`scripts/missao4.sh`](scripts/missao4.sh) | [`evidencias/missao4.txt`](evidencias/missao4.txt) | O evento chega ao Avisos; com o Avisos fora o pedido sai `201` em milissegundos e, quando ele volta, o reenvio entrega o pedido 2; o mesmo evento mandado de novo recebe `202` e `repetido, ignorado`, sem novo aviso; com o Avisos fora e o Pedidos reiniciado, a outbox guarda o pedido 3 e ele chega uma vez só; um segundo Avisos recebe o pedido 4 depois de mudar `ASSINANTES` e reiniciar o Pedidos (mesmo hash dos `.js` antes e depois) |
+
+```bash
+bash scripts/missao2.sh                   # com o Cardápio na 8081 e na 8091 (zera o arquivo)
+bash scripts/missao3.sh                   # com o Cardápio (8081) e o Pedidos (8082) (zera o arquivo)
+bash scripts/missao3.sh cardapio-fora     # depois de parar o Cardápio; acrescenta ao arquivo
+bash scripts/missao3.sh cardapio-lento    # com o Cardápio ainda parado; acrescenta ao arquivo
+bash scripts/missao4.sh                   # com as portas 8081 a 8084 livres
+```
+
+Os modos `cardapio-fora` e `cardapio-lento` conferem antes que o Cardápio está mesmo fora e param
+sem gravar nada se ele responder. O `missao4.sh` só substitui `evidencias/missao4.txt` se todas
+as conferências passarem; com `Ctrl+C` ou uma falha, o arquivo antigo fica como estava. Ele e o
+`subir.sh` conferem antes que as suas portas estão livres e param com erro se alguma estiver em uso.
+
+## Trilha de eventos
+
+O grupo escolheu a **Trilha A (webhook)**. O Pedidos lê da variável `ASSINANTES` uma lista de
+endereços e faz `POST /eventos` em cada um com o evento `cantina.pedido.confirmado`.
+
+Por quê:
+
+- Não precisa de infraestrutura extra. Não há broker para instalar, configurar ou manter no ar.
+- Roda no Codespaces ou em qualquer máquina com Python, Node e Go.
+- O professor avalia sem instalar nada além do que os serviços já pedem.
+
+O ponto fraco do webhook, que a simulação da aula mostra, é que o evento se perde se o
+consumidor estiver fora do ar na hora. Resolvemos assim:
+
+- **Outbox no Pedidos.** O evento é gravado em `outbox.json` antes do `201`, e um despachante
+  entrega em segundo plano. Se a entrega falha, o evento fica na outbox, e o Pedidos tenta de novo
+  `REENVIO_MS` (padrão 3 s) depois do fim de cada tentativa que falhou, inclusive depois de um
+  reinício do Pedidos. Só `400` e `413` são erro permanente (é o que `avisos.yaml` define) e
+  descartam o evento; qualquer outra resposta que não seja 2xx (`404`, `405`, `5xx`...) é tentada
+  de novo, e num `404` ou `405` o log pede para conferir o endereço em `ASSINANTES`. Corrigir
+  `ASSINANTES` vale só para pedidos novos: a entrada que já está na outbox fica presa ao endereço
+  errado, e para tirá-la é preciso parar o Pedidos e apagá-la do `outbox.json`. Código:
+  `servicos/pedidos/outbox.js` e `servicos/pedidos/publicador.js`.
+- **Deduplicação no Avisos.** O reenvio pode entregar o mesmo evento duas vezes. O Avisos lembra
+  o par `source` + `id` de cada evento (é o que identifica um evento no CloudEvents) e, se ele
+  chegar de novo, responde `202` sem repetir o aviso. Código: `servicos/avisos/main.go`, método
+  `marcar` de `idsProcessados`.
+
+O resultado é entrega "pelo menos uma vez" sem aviso duplicado, dentro dos limites descritos em
+[Limites conhecidos](#limites-conhecidos).
+
+## Arquitetura
+
+![Visão de estrutura](arquitetura/estrutura.png)
+
+A estrutura mostra os três serviços, a porta de cada um, os dados que só ele usa, o contrato em
+cada seta e os dois pontos de falha.
+
+Legenda, fontes `.mmd` e como renderizar de novo: [`arquitetura/README.md`](arquitetura/README.md).
 
 ## Prova de fogo (Missão 3)
 
 **Pendente: fazer na aula de 19/10.** Apontar `CARDAPIO_URL` para o Cardápio de outro grupo, de
 preferência em outra linguagem, e repetir o `POST /pedidos` sem alterar uma linha do Pedidos.
+Ela vai confirmar na aula o reuso e o baixo acoplamento entre grupos; até lá,
+ela não conta como evidência.
 
 | Grupo parceiro | Linguagem do Cardápio deles | Resultado |
 |---|---|---|
 | _a preencher_ | _a preencher_ | _a preencher_ |
+
+## Demonstração
+
+Roteiro para o vídeo ou a apresentação, em bash, na raiz do repositório, um serviço por terminal
+(assim dá para derrubar só o Avisos com `Ctrl+C`):
+
+1. Terminal 1: `PORTA=8081 python3 servicos/cardapio/app.py`.
+2. Terminal 2: `cd servicos/avisos && PORTA=8083 go run .`.
+3. Terminal 3: `PORTA=8082 CARDAPIO_URL=http://localhost:8081 ASSINANTES=http://localhost:8083/eventos node servicos/pedidos/server.js`.
+4. Terminal 4: faça um pedido com o `curl` de [Um pedido de exemplo](#um-pedido-de-exemplo).
+   Volta `201`, e no terminal 2 aparece `[avisos] Pedido N confirmado, total R$ 25,00` (N é o
+   número do pedido; apague `servicos/pedidos/dados/` antes para começar do 1).
+5. `Ctrl+C` no terminal 2: o Avisos sai do ar.
+6. Faça outro pedido no terminal 4. Volta `201` na hora, e no terminal 3 o Pedidos avisa que a
+   entrega falhou e que vai tentar de novo em 3 s.
+7. Religue o Avisos no terminal 2 (`PORTA=8083 go run .`). Em poucos segundos aparece o aviso do
+   segundo pedido: nada se perdeu.
+8. `Ctrl+C` nos terminais 1, 2 e 3 para encerrar.
+
+Com o `bash scripts/subir.sh` os três ficam num terminal só, e o `Ctrl+C` derruba todos juntos;
+para derrubar só o Avisos nesse modo seria preciso achar o PID dele, por isso o roteiro acima usa
+um terminal por serviço. O `bash scripts/missao4.sh` faz o mesmo roteiro de forma automática, e
+ainda mostra a deduplicação, a outbox sobrevivendo a um reinício do Pedidos e um segundo Avisos
+entrando só mudando `ASSINANTES` e reiniciando o Pedidos, sem mudar código.
+
+## Limites conhecidos
+
+- **O Avisos lembra os eventos só em memória.** Um reinício do Avisos esquece os pares
+  `source` + `id` já vistos; um evento reenviado depois disso gera o aviso de novo.
+- **Pedido e evento são gravados em dois arquivos.** O Pedidos grava primeiro o pedido em
+  `pedidos.json` e logo depois o evento em `outbox.json`. Se o processo cair exatamente entre as
+  duas gravações, o pedido fica confirmado e o evento daquele pedido se perde. A ordem é de
+  propósito: o evento leva o id do pedido, e perder um aviso é menos grave que avisar um pedido
+  que não existe (o que aconteceria na ordem inversa). Um banco de dados resolveria gravando os
+  dois na mesma transação.
+- **O reenvio não tem limite de tentativas.** Um assinante que nunca volta, ou um endereço errado
+  em `ASSINANTES`, faz o Pedidos tentar para sempre (o log mostra cada tentativa).
+- **Os comandos de PowerShell não foram testados** pelo grupo numa máquina Windows.
+
+## Estrutura do repositório
+
+```
+cantina-soa/
+├── contratos/          os contratos, escritos antes do código
+│   ├── cardapio.yaml
+│   ├── pedidos.yaml
+│   ├── pedido-confirmado.json
+│   ├── pedido-confirmado.schema.json
+│   ├── avisos.yaml
+├── servicos/
+│   ├── cardapio/       Python: app.py e itens.json
+│   ├── pedidos/        Node.js: server.js, cardapio.js, armazenamento.js, outbox.js, publicador.js
+│   └── avisos/         Go: main.go
+├── scripts/
+│   ├── subir.sh        sobe os três serviços num terminal só
+│   ├── missao2.sh
+│   ├── missao3.sh
+│   └── missao4.sh
+├── arquitetura/        fontes .mmd e imagens do desenho
+├── evidencias/         saídas dos scripts de cada missão
+└── README.md           como rodar e trilha de eventos
+```
+
+## Entregas
+
+| Tag | O que entrou | Prazo do laboratório |
+|---|---|---|
+| `entrega-1` | Contratos do Cardápio, do Pedidos e do evento; desenho inicial | 12/10 |
+| `entrega-2` | Cardápio em Python e a evidência da Missão 2 | 19/10 |
+| `entrega-3` | Pedidos em Node.js compondo o Cardápio, contrato do Pedidos 1.1.0 e a evidência da Missão 3 | 26/10 |
+| `entrega-4` | Contrato `avisos.yaml` e schema do evento (antes do código), Avisos em Go, outbox com reenvio no Pedidos, `subir.sh` e a evidência da Missão 4 | 2/11 |
+| `entrega-5` | README final com a matriz de princípios e o catálogo dos serviços, desenhos atualizados e a seção da prova de fogo (o teste com outro grupo fica para a aula de 19/10) | 6/11 |
