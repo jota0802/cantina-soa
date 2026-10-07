@@ -1,0 +1,45 @@
+$ curl -i http://localhost:8081/itens
+HTTP/1.0 200 OK
+Server: BaseHTTP/0.6 Python/3.9.6
+Date: Wed, 07 Oct 2026 01:01:33 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 312
+
+[{"id": 1, "nome": "Coxinha", "precoCentavos": 800, "disponivel": true}, {"id": 2, "nome": "Pão de queijo", "precoCentavos": 600, "disponivel": true}, {"id": 3, "nome": "Suco de laranja", "precoCentavos": 900, "disponivel": true}, {"id": 4, "nome": "Bolo de cenoura", "precoCentavos": 750, "disponivel": false}]
+
+$ curl -i http://localhost:8081/itens/1
+HTTP/1.0 200 OK
+Server: BaseHTTP/0.6 Python/3.9.6
+Date: Wed, 07 Oct 2026 01:01:33 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 70
+
+{"id": 1, "nome": "Coxinha", "precoCentavos": 800, "disponivel": true}
+
+$ curl -i http://localhost:8081/itens/99
+HTTP/1.0 404 Not Found
+Server: BaseHTTP/0.6 Python/3.9.6
+Date: Wed, 07 Oct 2026 01:01:33 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 81
+
+{"codigo": "item_inexistente", "mensagem": "O item 99 não existe no cardápio."}
+
+$ curl -i http://localhost:8091/itens/1
+HTTP/1.0 200 OK
+Server: BaseHTTP/0.6 Python/3.9.6
+Date: Wed, 07 Oct 2026 01:01:33 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 70
+
+{"id": 1, "nome": "Coxinha", "precoCentavos": 800, "disponivel": true}
+
+$ curl -i http://localhost:8081/saude
+HTTP/1.0 200 OK
+Server: BaseHTTP/0.6 Python/3.9.6
+Date: Wed, 07 Oct 2026 01:01:33 GMT
+Content-Type: application/json; charset=utf-8
+Content-Length: 39
+
+{"status": "ok", "servico": "cardapio"}
+
