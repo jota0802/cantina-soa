@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cantina.pedido.confirmado",
+  "description": "Evento que o Pedidos publica quando um pedido é confirmado, no envelope CloudEvents 1.0 em modo estruturado (o envelope inteiro vai no corpo, em JSON). O exemplo está em pedido-confirmado.json. O par source + id identifica o evento: o Pedidos gera um id novo (UUID) a cada pedido, e o Avisos usa esse par para deduplicar, ou seja, um evento com o mesmo source e o mesmo id de um já recebido é reconhecido como repetido e não gera outro aviso. Atributos de extensão do CloudEvents são permitidos (additionalProperties fica aberto).",
+  "type": "object",
+  "required": ["specversion", "id", "source", "type", "data"],
+  "properties": {
+    "specversion": {
+      "description": "Versão do CloudEvents.",
+      "type": "string",
+      "const": "1.0"
+    },
+    "id": {
+      "description": "Identificador do evento, único para cada source. Junto com source, é a chave de deduplicação.",
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "description": "Quem publicou o evento. O Pedidos usa /cantina/pedidos.",
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "description": "Tipo do evento.",
+      "type": "string",
+      "const": "cantina.pedido.confirmado"
+    },
+    "time": {
+      "description": "Quando o pedido foi confirmado (RFC 3339). Opcional no CloudEvents; o Pedidos sempre envia.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "datacontenttype": {
+      "description": "Formato de data. Opcional no CloudEvents; o Pedidos sempre envia application/json.",
+      "type": "string",
+      "const": "application/json"
+    },
+    "data": {
+      "description": "O pedido confirmado. Valores em dinheiro são inteiros em centavos (2500 = R$ 25,00).",
+      "type": "object",
+      "required": ["pedidoId", "totalCentavos"],
+      "properties": {
+        "pedidoId": {
+          "description": "Id do pedido, o mesmo de GET /pedidos/{id} em pedidos.yaml.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "totalCentavos": {
+          "description": "Total do pedido em centavos.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

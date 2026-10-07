@@ -1,0 +1,173 @@
+openapi: 3.0.3
+info:
+  title: Avisos
+  version: 1.0.0
+  description: |
+    Avisa quando um pedido da Cantina é confirmado. O Avisos não chama
+    nenhum outro serviço: ele é o **assinante** da Trilha A (webhook).
+    O Pedidos faz `POST /eventos` neste serviço com o evento
+    `cantina.pedido.confirmado`, no envelope CloudEvents 1.0. O exemplo do
+    evento está em `pedido-confirmado.json`, e as regras dele (campos
+    obrigatórios, tipos e limites) em `pedido-confirmado.schema.json`
+    (JSON Schema 2020-12). O Pedidos reenvia enquanto o Avisos estiver fora
+    do ar.
+
+    Por isso a entrega é "pelo menos uma vez": o mesmo evento pode chegar
+    mais de uma vez. O Avisos lembra cada evento já processado pelo par
+    (`source`, `id`), que é o que identifica um evento no CloudEvents 1.0,
+    e, se ele chegar de novo, responde 202 sem gerar o aviso outra vez.
+    Assim o reenvio é sempre seguro.
+
+    Valores em dinheiro são inteiros em centavos (2500 = R$ 25,00).
+servers:
+  - url: http://localhost:8083
+    description: Porta usada nos testes (variável PORTA)
+paths:
+  /eventos:
+    post:
+      operationId: receberEvento
+      summary: Recebe um evento (endpoint de assinante da Trilha A)
+      description: |
+        Recebe um CloudEvent 1.0 em modo estruturado: o envelope inteiro vai
+        no corpo, em JSON. O tipo tratado é `cantina.pedido.confirmado`
+        (veja `pedido-confirmado.json`); ao recebê-lo, o Avisos registra um
+        aviso como `[avisos] Pedido 1 confirmado, total R$ 25,00`.
+
+        - Evento novo do tipo tratado: gera o aviso e responde 202.
+        - Evento repetido (mesmo `source` e mesmo `id`): responde 202 sem
+          gerar aviso de novo.
+          O evento é validado antes de olhar o `id`; por isso um reenvio
+          com o corpo inválido continua recebendo 400.
+        - Evento de outro tipo: é ignorado e responde 202.
+        - Corpo que não é um CloudEvent válido: responde 400.
+        - Corpo maior que 1 MiB: responde 413.
+
+        Para o Pedidos, só 400 e 413 são definitivos (o evento é descartado).
+        Qualquer outra resposta que não seja 2xx é tratada como falha
+        passageira e a entrega é tentada de novo.
+      requestBody:
+        required: true
+        content:
+          application/cloudevents+json:
+            schema:
+              $ref: '#/components/schemas/CloudEvent'
+            example:
+              specversion: "1.0"
+              id: b7e2c1a0-0001
+              source: /cantina/pedidos
+              type: cantina.pedido.confirmado
+              time: "2026-10-05T12:30:00Z"
+              datacontenttype: application/json
+              data: { pedidoId: 1, totalCentavos: 2500 }
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudEvent'
+      responses:
+        '202':
+          description: |
+            Evento aceito. Vale também para evento repetido (reconhecido sem
+            gerar aviso de novo) e para tipo que o Avisos não trata (ignorado).
+            O corpo da resposta é vazio.
+        '400':
+          description: |
+            O corpo não é um CloudEvent válido: JSON inválido
+            (`requisicao_invalida`); JSON que não é um objeto (lista, texto,
+            número ou null), `specversion` diferente de "1.0", falta `id`,
+            `source` ou `type`, ou algum deles não é texto (`evento_invalido`).
+            Também vale (`evento_invalido`) para `cantina.pedido.confirmado`
+            cujo `data` não traz `pedidoId` e `totalCentavos` inteiros, ou traz
+            `pedidoId` menor que 1 ou `totalCentavos` negativo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                jsonInvalido:
+                  value:
+                    codigo: requisicao_invalida
+                    mensagem: "O corpo não é um JSON válido"
+                envelopeInvalido:
+                  value:
+                    codigo: evento_invalido
+                    mensagem: "specversion deve ser \"1.0\""
+        '413':
+          description: Corpo maior que 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                codigo: requisicao_invalida
+                mensagem: "O corpo passa de 1 MiB"
+  /saude:
+    get:
+      operationId: saude
+      summary: Verificação de saúde
+      responses:
+        '200':
+          description: Serviço no ar
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+              example:
+                status: ok
+components:
+  schemas:
+    CloudEvent:
+      type: object
+      description: Envelope CloudEvents 1.0 em modo estruturado
+      required: [specversion, id, source, type]
+      properties:
+        specversion:
+          type: string
+          enum: ["1.0"]
+        id:
+          type: string
+          description: Identificador do evento, único para cada `source`; é pelo par (`source`, `id`) que o Avisos reconhece repetidos
+        source:
+          type: string
+          description: Quem publicou o evento, como `/cantina/pedidos`
+        type:
+          type: string
+          description: Tipo do evento, como `cantina.pedido.confirmado`
+        time:
+          type: string
+          format: date-time
+        datacontenttype:
+          type: string
+        data:
+          description: |
+            Conteúdo do evento. Em `cantina.pedido.confirmado` segue o schema
+            `PedidoConfirmado`; em outros tipos (ignorados) pode ser qualquer coisa.
+    PedidoConfirmado:
+      type: object
+      description: |
+        Conteúdo de `data` no evento `cantina.pedido.confirmado` (o mesmo de
+        `pedido-confirmado.schema.json`)
+      required: [pedidoId, totalCentavos]
+      properties:
+        pedidoId:
+          type: integer
+          minimum: 1
+        totalCentavos:
+          type: integer
+          minimum: 0
+          description: Total do pedido em centavos (2500 = R$ 25,00)
+    Erro:
+      type: object
+      required: [codigo, mensagem]
+      properties:
+        codigo:
+          type: string
+          enum: [requisicao_invalida, evento_invalido, rota_inexistente, metodo_nao_permitido]
+          description: |
+            Os dois últimos ficam fora das rotas do contrato: rota_inexistente (404 em um caminho
+            que não existe) e metodo_nao_permitido (405, com o header Allow).
+        mensagem:
+          type: string
+          description: Texto para quem chamou entender o que aconteceu
