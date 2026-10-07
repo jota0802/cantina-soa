@@ -1,0 +1,284 @@
+# Missão 4: evento cantina.pedido.confirmado (Trilha A, webhook)
+# 07/10/2026 09:25:41 · node v24.18.0 · go1.26.4 · Python 3.9.6
+# Portas: Cardápio 8081, Pedidos 8082, Avisos 8083 e 8084
+# TMP=/var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a (logs e DADOS_DIR do Pedidos; apagada no fim)
+
+$ (cd servicos/avisos && go build -o "$TMP/avisos" .)
+
+## Passo 1 · Cardápio, Avisos e Pedidos no ar; um pedido gera o aviso
+
+$ PORTA=8081 python3 servicos/cardapio/app.py &
+$ PORTA=8083 NOME=avisos "$TMP/avisos" &
+$ PORTA=8082 CARDAPIO_URL=http://localhost:8081 DADOS_DIR="$TMP/dados" ASSINANTES=http://localhost:8083/eventos node servicos/pedidos/server.js &
+(os três responderam 200 em /saude)
+
+$ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data @servicos/pedidos/pedido.json
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Content-Length: 117
+Location: /pedidos/1
+Date: Wed, 07 Oct 2026 12:25:42 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":1,"itens":[{"itemId":1,"quantidade":2},{"itemId":3,"quantidade":1}],"totalCentavos":2500,"status":"confirmado"}
+  [ok] POST /pedidos respondeu 201
+
+$ grep "Pedido 1 " "$TMP/avisos.log"
+[avisos] Pedido 1 confirmado, total R$ 25,00
+  [ok] o Avisos registrou o pedido 1 (R$ 25,00)
+
+## Passo 2 · Avisos fora do ar: o pedido sai 201 mesmo assim, sem esperar
+
+$ kill 84690   # o Avisos (8083)
+
+$ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data @servicos/pedidos/pedido.json -w '\ntempo_total=%{time_total}s\n'
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Content-Length: 117
+Location: /pedidos/2
+Date: Wed, 07 Oct 2026 12:25:42 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":2,"itens":[{"itemId":1,"quantidade":2},{"itemId":3,"quantidade":1}],"totalCentavos":2500,"status":"confirmado"}
+tempo_total=0.002511s
+  [ok] POST /pedidos respondeu 201 com o Avisos fora
+  [ok] a resposta veio em menos de 1 s (foi em 0.002511 s)
+
+$ grep -m 2 "nova tentativa" "$TMP/pedidos.log"
+[pedidos:8082] evento fc6dc812-c712-4a6c-b76e-f7c3defa1602 para http://localhost:8083/eventos falhou (conexão recusada: o assinante está fora do ar?), nova tentativa em 3 s
+  [ok] o Pedidos avisou que vai tentar de novo
+
+$ cat "$TMP/dados/outbox.json"
+[
+  {
+    "assinante": "http://localhost:8083/eventos",
+    "evento": {
+      "specversion": "1.0",
+      "id": "fc6dc812-c712-4a6c-b76e-f7c3defa1602",
+      "source": "/cantina/pedidos",
+      "type": "cantina.pedido.confirmado",
+      "time": "2026-10-07T12:25:42.811Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "pedidoId": 2,
+        "totalCentavos": 2500
+      }
+    }
+  }
+]
+  [ok] o evento do pedido 2 está guardado na outbox
+(o script guarda uma cópia deste evento em $TMP/evento-pedido2.json para o Passo 4)
+
+## Passo 3 · Avisos de volta: o reenvio entrega o pedido 2
+
+$ PORTA=8083 NOME=avisos "$TMP/avisos" &
+(Avisos de novo no ar; o Pedidos tenta de novo 3 s depois de cada tentativa que falhou)
+
+$ tail -n 2 "$TMP/avisos.log"
+[avisos] ouvindo na porta 8083
+[avisos] Pedido 2 confirmado, total R$ 25,00
+  [ok] o Avisos registrou o pedido 2 depois de voltar
+
+$ grep "entregue" "$TMP/pedidos.log"
+[pedidos:8082] evento 72ce41c5-7458-48f8-9f54-15a048121399 entregue a http://localhost:8083/eventos
+[pedidos:8082] evento fc6dc812-c712-4a6c-b76e-f7c3defa1602 entregue a http://localhost:8083/eventos
+
+$ cat "$TMP/dados/outbox.json"
+[]
+  [ok] a outbox ficou vazia
+
+## Passo 4 · Deduplicação: o mesmo evento chega de novo e não gera outro aviso
+
+
+$ cat "$TMP/evento-pedido2.json"
+{"specversion":"1.0","id":"fc6dc812-c712-4a6c-b76e-f7c3defa1602","source":"/cantina/pedidos","type":"cantina.pedido.confirmado","time":"2026-10-07T12:25:42.811Z","datacontenttype":"application/json","data":{"pedidoId":2,"totalCentavos":2500}}
+  [ok] é o evento que o Pedidos já entregou no Passo 3 (id fc6dc812-c712-4a6c-b76e-f7c3defa1602)
+
+$ curl -i -sS -X POST http://localhost:8083/eventos -H "Content-Type: application/cloudevents+json" --data-binary @"$TMP/evento-pedido2.json"
+HTTP/1.1 202 Accepted
+Date: Wed, 07 Oct 2026 12:25:45 GMT
+Content-Length: 0
+
+  [ok] o Avisos respondeu 202 ao evento repetido
+
+$ tail -n 1 "$TMP/avisos.log"
+[avisos] evento fc6dc812-c712-4a6c-b76e-f7c3defa1602 repetido, ignorado
+  [ok] o Avisos logou "repetido, ignorado"
+
+$ grep -c "Pedido 2 confirmado" "$TMP/avisos.log"
+1
+  [ok] o aviso do pedido 2 aparece uma vez só
+
+## Passo 5 · A outbox sobrevive a um reinício do Pedidos
+
+$ kill 84740   # o Avisos (8083)
+
+$ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data @servicos/pedidos/pedido.json
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Content-Length: 117
+Location: /pedidos/3
+Date: Wed, 07 Oct 2026 12:25:45 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":3,"itens":[{"itemId":1,"quantidade":2},{"itemId":3,"quantidade":1}],"totalCentavos":2500,"status":"confirmado"}
+  [ok] POST /pedidos respondeu 201 com o Avisos fora
+
+$ cat "$TMP/dados/outbox.json"
+[
+  {
+    "assinante": "http://localhost:8083/eventos",
+    "evento": {
+      "specversion": "1.0",
+      "id": "12c23c26-386c-4e5d-a877-02335b9679ab",
+      "source": "/cantina/pedidos",
+      "type": "cantina.pedido.confirmado",
+      "time": "2026-10-07T12:25:45.993Z",
+      "datacontenttype": "application/json",
+      "data": {
+        "pedidoId": 3,
+        "totalCentavos": 2500
+      }
+    }
+  }
+]
+  [ok] o evento do pedido 3 está guardado na outbox
+
+$ kill 84701   # o Pedidos (8082), com a entrega do pedido 3 pendente
+$ PORTA=8082 CARDAPIO_URL=http://localhost:8081 DADOS_DIR="$TMP/dados" ASSINANTES=http://localhost:8083/eventos node servicos/pedidos/server.js &
+
+$ grep "entregas pendentes" "$TMP/pedidos.log" | tail -n 1
+  Outbox: /var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a/dados/outbox.json (1 entregas pendentes)
+  [ok] o Pedidos reiniciado achou 1 entrega pendente na outbox
+
+$ PORTA=8083 NOME=avisos "$TMP/avisos" &
+(Avisos de novo no ar; esperando o reenvio e a outbox esvaziar)
+
+$ grep -c "Pedido 3 confirmado" "$TMP/avisos.log"
+1
+  [ok] o aviso do pedido 3 chegou exatamente uma vez
+
+$ cat "$TMP/dados/outbox.json"
+[]
+  [ok] a outbox ficou vazia (não sobrou reenvio)
+
+## Passo 6 · Segundo consumidor: muda ASSINANTES e reinicia o Pedidos, sem mudar o código
+
+$ sha1sum servicos/pedidos/*.js
+e44810844139d558c9bd7cccd404f52e96c9fe91  servicos/pedidos/armazenamento.js
+c8e5da4e6b1bd79ff99d400317c20cb7fb6df506  servicos/pedidos/cardapio.js
+e9170592dfda917826321ec84b29abb1d89c6186  servicos/pedidos/outbox.js
+b80f6e888ef7a49e4653519453e2bdcad19998af  servicos/pedidos/publicador.js
+f49e1b5070b3db613efd11d10008d501d20803b0  servicos/pedidos/server.js
+
+$ PORTA=8084 NOME=avisos-2 "$TMP/avisos" &
+$ kill 85040   # o Pedidos (8082)
+$ PORTA=8082 CARDAPIO_URL=http://localhost:8081 DADOS_DIR="$TMP/dados" ASSINANTES=http://localhost:8083/eventos,http://localhost:8084/eventos node servicos/pedidos/server.js &
+
+$ grep "Assinantes" "$TMP/pedidos.log" | tail -n 1
+  Assinantes do evento cantina.pedido.confirmado: http://localhost:8083/eventos, http://localhost:8084/eventos
+
+$ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data @servicos/pedidos/pedido.json
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Content-Length: 117
+Location: /pedidos/4
+Date: Wed, 07 Oct 2026 12:25:49 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":4,"itens":[{"itemId":1,"quantidade":2},{"itemId":3,"quantidade":1}],"totalCentavos":2500,"status":"confirmado"}
+  [ok] POST /pedidos respondeu 201
+
+$ grep -h "Pedido 4 " "$TMP/avisos.log" "$TMP/avisos-2.log"
+[avisos] Pedido 4 confirmado, total R$ 25,00
+[avisos-2] Pedido 4 confirmado, total R$ 25,00
+  [ok] avisos (8083) registrou o pedido 4
+  [ok] avisos-2 (8084) registrou o pedido 4
+
+$ sha1sum servicos/pedidos/*.js
+e44810844139d558c9bd7cccd404f52e96c9fe91  servicos/pedidos/armazenamento.js
+c8e5da4e6b1bd79ff99d400317c20cb7fb6df506  servicos/pedidos/cardapio.js
+e9170592dfda917826321ec84b29abb1d89c6186  servicos/pedidos/outbox.js
+b80f6e888ef7a49e4653519453e2bdcad19998af  servicos/pedidos/publicador.js
+f49e1b5070b3db613efd11d10008d501d20803b0  servicos/pedidos/server.js
+  [ok] o código do Pedidos não mudou (mesmo hash antes e depois)
+
+## Passo 7 · Fim: o script derruba os quatro processos e confere que as portas ficaram livres
+
+$ kill <PIDs do Cardápio, dos dois Avisos e do Pedidos>
+  [ok] nada escuta mais na porta 8081
+  [ok] nada escuta mais na porta 8082
+  [ok] nada escuta mais na porta 8083
+  [ok] nada escuta mais na porta 8084
+
+## Saída do Avisos
+
+$ cat "$TMP/avisos.log"
+[avisos] ouvindo na porta 8083
+[avisos] Pedido 1 confirmado, total R$ 25,00
+[avisos] encerrando...
+[avisos] encerrado
+[avisos] ouvindo na porta 8083
+[avisos] Pedido 2 confirmado, total R$ 25,00
+[avisos] evento fc6dc812-c712-4a6c-b76e-f7c3defa1602 repetido, ignorado
+[avisos] encerrando...
+[avisos] encerrado
+[avisos] ouvindo na porta 8083
+[avisos] Pedido 3 confirmado, total R$ 25,00
+[avisos] Pedido 4 confirmado, total R$ 25,00
+[avisos] encerrando...
+[avisos] encerrado
+
+$ cat "$TMP/avisos-2.log"
+[avisos-2] ouvindo na porta 8084
+[avisos-2] Pedido 4 confirmado, total R$ 25,00
+[avisos-2] encerrando...
+[avisos-2] encerrado
+
+## Saída do Pedidos
+
+$ cat "$TMP/pedidos.log"
+Pedidos no ar em http://localhost:8082
+  Cardápio: http://localhost:8081
+  Dados: /var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a/dados/pedidos.json (0 pedidos salvos)
+  Assinantes do evento cantina.pedido.confirmado: http://localhost:8083/eventos
+  Outbox: /var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a/dados/outbox.json (0 entregas pendentes)
+[pedidos:8082] GET /saude -> 200 (2 ms)
+[pedidos:8082] POST /pedidos -> 201 (5 ms)
+[pedidos:8082] evento 72ce41c5-7458-48f8-9f54-15a048121399 entregue a http://localhost:8083/eventos
+[pedidos:8082] POST /pedidos -> 201 (2 ms)
+[pedidos:8082] evento fc6dc812-c712-4a6c-b76e-f7c3defa1602 para http://localhost:8083/eventos falhou (conexão recusada: o assinante está fora do ar?), nova tentativa em 3 s
+[pedidos:8082] evento fc6dc812-c712-4a6c-b76e-f7c3defa1602 entregue a http://localhost:8083/eventos
+[pedidos:8082] POST /pedidos -> 201 (12 ms)
+[pedidos:8082] evento 12c23c26-386c-4e5d-a877-02335b9679ab para http://localhost:8083/eventos falhou (conexão recusada: o assinante está fora do ar?), nova tentativa em 3 s
+
+Pedidos encerrado.
+Pedidos no ar em http://localhost:8082
+  Cardápio: http://localhost:8081
+  Dados: /var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a/dados/pedidos.json (3 pedidos salvos)
+  Assinantes do evento cantina.pedido.confirmado: http://localhost:8083/eventos
+  Outbox: /var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a/dados/outbox.json (1 entregas pendentes)
+[pedidos:8082] evento 12c23c26-386c-4e5d-a877-02335b9679ab para http://localhost:8083/eventos falhou (conexão recusada: o assinante está fora do ar?), nova tentativa em 3 s
+[pedidos:8082] GET /saude -> 200 (1 ms)
+[pedidos:8082] evento 12c23c26-386c-4e5d-a877-02335b9679ab entregue a http://localhost:8083/eventos
+
+Pedidos encerrado.
+Pedidos no ar em http://localhost:8082
+  Cardápio: http://localhost:8081
+  Dados: /var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a/dados/pedidos.json (3 pedidos salvos)
+  Assinantes do evento cantina.pedido.confirmado: http://localhost:8083/eventos, http://localhost:8084/eventos
+  Outbox: /var/folders/fw/dpljgp2j3wj37by9xlbkp1bh0000gn/T/tmp.ShMZgYae3a/dados/outbox.json (0 entregas pendentes)
+[pedidos:8082] GET /saude -> 200 (1 ms)
+[pedidos:8082] POST /pedidos -> 201 (4 ms)
+[pedidos:8082] evento ee0311f4-0b27-456a-9b2c-83b18e4c5e72 entregue a http://localhost:8083/eventos
+[pedidos:8082] evento ee0311f4-0b27-456a-9b2c-83b18e4c5e72 entregue a http://localhost:8084/eventos
+
+Pedidos encerrado.
+
+## Resultado
+
+Tudo certo: todas as conferências passaram.
