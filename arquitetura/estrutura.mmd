@@ -1,13 +1,20 @@
 ---
-title: Cantina SOA · visão de estrutura (Entrega 2 · Cardápio no ar)
+title: Cantina SOA · visão de estrutura (Entrega 3 · Pedidos compõe o Cardápio)
 config:
   fontFamily: "Arial, Helvetica, sans-serif"
   flowchart:
     wrappingWidth: 320
 ---
-%% Entrega 2: o Cardápio está no ar, com os dados dele e duas instâncias. Pedidos e Avisos ainda são planejados.
+%% Entrega 3: o Pedidos está no ar e consulta o Cardápio pelo contrato. O Avisos ainda é planejado.
 flowchart LR
   cliente(["Cliente<br/>curl · app · navegador"])
+
+  subgraph PED["Pedidos · Node.js · porta 8082"]
+    direction TB
+    pedidos["Pedidos<br/>valida os itens no Cardápio,<br/>calcula o total e confirma"]
+    pedJson[("dados/pedidos.json<br/>só do Pedidos")]
+    pedidos --- pedJson
+  end
 
   subgraph CAR["Cardápio · Python 3 · sem estado"]
     direction TB
@@ -18,12 +25,16 @@ flowchart LR
     car2 --- itens
   end
 
-  pedidos["Pedidos · planejado<br/>Node.js · porta 8082"]
+  canal(["Canal de eventos · planejado"])
   av["Avisos · planejado<br/>Go · porta 8083"]
 
-  cliente -->|"pedidos.yaml"| pedidos
-  pedidos -->|"cardapio.yaml<br/>GET /itens/{id}"| car1
-  pedidos -.->|"pedido-confirmado.json"| av
+  cliente -->|"pedidos.yaml<br/>POST /pedidos<br/>GET /pedidos/{id}"| pedidos
+  pedidos -.->|"pedido-confirmado.json"| canal
+  canal -.->|"pedido-confirmado.json"| av
+  pedidos -->|"cardapio.yaml<br/>GET /itens/{id}<br/>tempo limite de 2 s<br/>endereço vem de<br/>CARDAPIO_URL"| car1
+
+  f1["Ponto de falha 1<br/>Cardápio fora ou lento:<br/>503 em até 2 s,<br/>nenhum pedido criado"]
+  CAR ~~~ f1
 
   subgraph LEG["Legenda"]
     direction LR
@@ -37,15 +48,18 @@ flowchart LR
   classDef dados fill:#fff7e0,stroke:#b8860b,color:#4a3700
   classDef externo fill:#f2f2f2,stroke:#555,color:#222
   classDef planejado fill:#f7f7f7,stroke:#9e9e9e,stroke-dasharray:5 5,color:#757575
+  classDef falha fill:#fdecea,stroke:#c0392b,stroke-width:1.5px,color:#7a1d14
   classDef legenda fill:#ffffff,stroke:#999,color:#333
 
-  class car1,car2 servico
-  class itens,lf dados
+  class pedidos,car1,car2 servico
+  class pedJson,itens,lf dados
   class cliente externo
-  class pedidos,av,lp planejado
+  class canal,av,lp planejado
+  class f1 falha
   class la,lb,lc,ld,le legenda
 
-  %% 0 e 1 são os dados do Cardápio; 2, 3 e 4 ainda são planejadas.
-  linkStyle 2,3,4 stroke:#9e9e9e,color:#757575
+  %% 0 a 2 são dados; 4 e 5 (o evento) ainda são planejadas; 3 e 6 estão no ar.
+  linkStyle 4,5 stroke:#9e9e9e,color:#757575
+  style PED fill:#fdf3fd,stroke:#c77dc7
   style CAR fill:#effaf7,stroke:#4fb8a0
   style LEG fill:#fafafa,stroke:#bbb
