@@ -1,0 +1,73 @@
+---
+title: Cantina SOA · visão de sequência de um pedido
+config:
+  fontFamily: "Arial, Helvetica, sans-serif"
+---
+%% ->> chamada síncrona (quem chama espera); -->> resposta; --) evento assíncrono (seta aberta, pontilhada);
+%% --x tentativa de entrega do evento que falhou; -x chamada síncrona que falhou.
+sequenceDiagram
+  autonumber
+  actor C as Cliente<br/>curl · app · navegador
+  box rgb(232,241,251) Pedidos · Node.js · porta 8082
+    participant P as Pedidos
+    participant D as pedidos.json<br/>e outbox.json<br/>(só do Pedidos)
+  end
+  box rgb(240,251,248) Cardápio · Python 3 · porta 8081
+    participant K as Cardápio
+  end
+  box rgb(255,244,230) Avisos · Go · porta 8083
+    participant A as Avisos
+  end
+
+  Note over C,A: Legenda: linha cheia = chamada síncrona · pontilhada com seta cheia = resposta<br/>pontilhada com seta aberta = evento · x na ponta = tentativa que falhou (pontilhada se for evento)
+
+  C->>P: POST /pedidos (pedidos.yaml)<br/>itens: item 1 × 2 e item 3 × 1
+
+  alt Cardápio no ar e responde em até 2 s
+    par GET /itens/1
+      P->>K: GET /itens/1 (cardapio.yaml)
+      K-->>P: 200 · item 1 com precoCentavos, disponivel true
+    and GET /itens/3
+      P->>K: GET /itens/3 (cardapio.yaml)
+      K-->>P: 200 · item 3 com precoCentavos, disponivel true
+    end
+
+    alt todos os itens existem e estão disponíveis
+      P->>P: total = soma de preço × quantidade
+      P->>D: grava o pedido em pedidos.json<br/>e, em outbox.json, uma entrada por endereço de ASSINANTES
+      P-->>C: 201 Created · Location /pedidos/1<br/>status confirmado e totalCentavos
+      Note over P,A: Depois da resposta ao cliente: o evento não atrasa o 201.<br/>Cada tentativa tem tempo limite de 2 s.
+      alt Avisos no ar
+        P--)A: POST /eventos (avisos.yaml) · cantina.pedido.confirmado<br/>(pedido-confirmado.json, CloudEvents, endereço em ASSINANTES)
+        A->>A: par source + id ainda não visto: guarda o par<br/>e registra "[avisos] Pedido 1 confirmado, total R$ 25,00"
+        A-->>P: 202
+        P->>D: tira a entrada da outbox
+      else Avisos recusa o evento
+        P--)A: POST /eventos (avisos.yaml)
+        A-->>P: 400 evento_invalido ou 413 (só esses dois são erro permanente)
+        P->>D: descarta: tira a entrada da outbox, sem reenviar
+      else Avisos fora do ar, sem resposta em 2 s ou outra resposta (404, 405, 5xx...)
+        P--xA: POST /eventos (avisos.yaml) · ex.: conexão recusada
+        Note over P,D: O pedido continua confirmado.<br/>A entrada fica em outbox.json (sobrevive a um reinício do Pedidos).
+        loop enquanto falhar: espera REENVIO_MS (padrão 3 s) contados do fim da tentativa anterior
+          P--xA: POST /eventos (avisos.yaml) · o mesmo evento, mesmo source + id
+        end
+        Note over A: Avisos volta ao ar
+        P--)A: POST /eventos (avisos.yaml) · o mesmo evento, mesmo source + id
+        A->>A: deduplicação pelo par source + id:<br/>par novo, gera o aviso · par já visto, não gera de novo
+        A-->>P: 202 nos dois casos
+        P->>D: tira a entrada da outbox
+      end
+
+    else item inexistente ou indisponível
+      Note over P,K: ex.: o item 4 (Bolo de cenoura) vem com disponivel false,<br/>ou o Cardápio responde 404 para um item que não existe
+      P-->>C: 422 item_indisponivel ou item_inexistente
+      Note over P,D: nada é gravado e nenhum evento é publicado
+    end
+
+  else Cardápio fora do ar, sem resposta em 2 s ou com erro
+    P-xK: GET /itens/1 e GET /itens/3 (cardapio.yaml)
+    Note over P: a conexão é recusada (503 na hora), o tempo limite de 2 s estoura<br/>(503 em cerca de 2 s) ou o Cardápio responde algo diferente de 200 e 404
+    P-->>C: 503 cardapio_indisponivel
+    Note over P,D: nada é gravado e nenhum evento é publicado
+  end
