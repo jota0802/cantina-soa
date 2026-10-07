@@ -1,48 +1,51 @@
 ---
-title: Cantina SOA · visão de estrutura (Entrega 1 · só os contratos)
+title: Cantina SOA · visão de estrutura (Entrega 2 · Cardápio no ar)
 config:
   fontFamily: "Arial, Helvetica, sans-serif"
   flowchart:
     wrappingWidth: 320
 ---
-%% Entrega 1: os contratos existem, os serviços ainda são planejados (cinza e tracejados).
+%% Entrega 2: o Cardápio está no ar, com os dados dele e duas instâncias. Pedidos e Avisos ainda são planejados.
 flowchart LR
   cliente(["Cliente<br/>curl · app · navegador"])
 
-  subgraph CON["contratos/ · escritos antes do código"]
+  subgraph CAR["Cardápio · Python 3 · sem estado"]
     direction TB
-    c1@{ shape: doc, label: "cardapio.yaml<br/>OpenAPI · padrão da turma" }
-    c2@{ shape: doc, label: "pedidos.yaml<br/>OpenAPI" }
-    c3@{ shape: doc, label: "pedido-confirmado.json<br/>evento CloudEvents" }
+    car1["Cardápio<br/>porta 8081"]
+    car2["Cardápio, 2ª instância<br/>porta 8091<br/>prova que não guarda estado"]
+    itens[("itens.json<br/>só do Cardápio")]
+    car1 --- itens
+    car2 --- itens
   end
 
   pedidos["Pedidos · planejado<br/>Node.js · porta 8082"]
-  car["Cardápio · planejado<br/>Python 3 · porta 8081"]
   av["Avisos · planejado<br/>Go · porta 8083"]
 
   cliente -->|"pedidos.yaml"| pedidos
-  pedidos -->|"cardapio.yaml"| car
+  pedidos -->|"cardapio.yaml<br/>GET /itens/{id}"| car1
   pedidos -.->|"pedido-confirmado.json"| av
-  CON ~~~ cliente
 
   subgraph LEG["Legenda"]
     direction LR
     la["quem chama"] -->|"chamada síncrona<br/>HTTP + JSON, espera a resposta"| lb["quem responde"]
     lc["quem publica"] -.->|"evento assíncrono<br/>não espera o consumidor"| ld["quem consome"]
+    le["serviço"] --- lf[("dados que<br/>só ele usa")]
     lp["cinza e tracejado:<br/>planejado, ainda não existe"]
   end
 
+  classDef servico fill:#e8f1fb,stroke:#2f6db5,stroke-width:1.5px,color:#13294b
+  classDef dados fill:#fff7e0,stroke:#b8860b,color:#4a3700
   classDef externo fill:#f2f2f2,stroke:#555,color:#222
-  classDef contrato fill:#eef7ee,stroke:#2e7d32,color:#1b4d1e
   classDef planejado fill:#f7f7f7,stroke:#9e9e9e,stroke-dasharray:5 5,color:#757575
   classDef legenda fill:#ffffff,stroke:#999,color:#333
 
+  class car1,car2 servico
+  class itens,lf dados
   class cliente externo
-  class c1,c2,c3 contrato
-  class pedidos,car,av,lp planejado
-  class la,lb,lc,ld legenda
+  class pedidos,av,lp planejado
+  class la,lb,lc,ld,le legenda
 
-  %% 0 a 2 são planejadas; 3 só posiciona os contratos.
-  linkStyle 0,1,2 stroke:#9e9e9e,color:#757575
-  style CON fill:#fbfefb,stroke:#2e7d32
+  %% 0 e 1 são os dados do Cardápio; 2, 3 e 4 ainda são planejadas.
+  linkStyle 2,3,4 stroke:#9e9e9e,color:#757575
+  style CAR fill:#effaf7,stroke:#4fb8a0
   style LEG fill:#fafafa,stroke:#bbb
