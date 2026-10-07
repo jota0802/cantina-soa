@@ -1,0 +1,56 @@
+openapi: 3.0.3
+info:
+  title: Cardápio
+  version: 1.0.0
+paths:
+  /itens:
+    get:
+      summary: Lista os itens do cardápio
+      responses:
+        '200':
+          description: Lista de itens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Item'
+  /itens/{id}:
+    get:
+      summary: Consulta um item
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Item encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Item'
+        '404':
+          description: Item não existe
+  /saude:
+    get:
+      summary: Verificação de saúde
+      responses:
+        '200':
+          description: Serviço no ar
+components:
+  schemas:
+    Item:
+      type: object
+      required: [id, nome, precoCentavos, disponivel]
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        precoCentavos:
+          type: integer
+          description: Preço em centavos (800 = R$ 8,00)
+        disponivel:
+          type: boolean
