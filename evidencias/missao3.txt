@@ -3,7 +3,7 @@ HTTP/1.1 201 Created
 Content-Type: application/json; charset=utf-8
 Content-Length: 117
 Location: /pedidos/1
-Date: Wed, 07 Oct 2026 01:01:39 GMT
+Date: Wed, 07 Oct 2026 12:20:53 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -14,7 +14,7 @@ $ curl -i -sS http://localhost:8082/pedidos/1
 HTTP/1.1 200 OK
 Content-Type: application/json; charset=utf-8
 Content-Length: 117
-Date: Wed, 07 Oct 2026 01:01:39 GMT
+Date: Wed, 07 Oct 2026 12:20:53 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -25,7 +25,7 @@ $ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: applicatio
 HTTP/1.1 422 Unprocessable Entity
 Content-Type: application/json; charset=utf-8
 Content-Length: 101
-Date: Wed, 07 Oct 2026 01:01:39 GMT
+Date: Wed, 07 Oct 2026 12:20:53 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -36,7 +36,7 @@ $ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: applicatio
 HTTP/1.1 422 Unprocessable Entity
 Content-Type: application/json; charset=utf-8
 Content-Length: 89
-Date: Wed, 07 Oct 2026 01:01:39 GMT
+Date: Wed, 07 Oct 2026 12:20:53 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
@@ -47,38 +47,41 @@ $ curl -i -sS http://localhost:8082/pedidos/2
 HTTP/1.1 404 Not Found
 Content-Type: application/json; charset=utf-8
 Content-Length: 67
-Date: Wed, 07 Oct 2026 01:01:39 GMT
+Date: Wed, 07 Oct 2026 12:20:53 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
 {"codigo":"pedido_inexistente","mensagem":"O pedido 2 não existe"}
 
 
-# Cardápio fora do ar: o Pedidos deve responder 503 em no máximo ~2 s.
+# Cardápio fora do ar (conferido antes: GET http://localhost:8081/saude falhou).
+# O Pedidos deve responder 503 em no máximo ~2 s.
 
 $ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data "@servicos/pedidos/pedido.json" -w '\ntempo_total=%{time_total}s\n'
 HTTP/1.1 503 Service Unavailable
 Content-Type: application/json; charset=utf-8
 Content-Length: 161
-Date: Wed, 07 Oct 2026 01:01:40 GMT
+Date: Wed, 07 Oct 2026 12:20:54 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
 {"codigo":"cardapio_indisponivel","mensagem":"Não foi possível conectar ao Cardápio em http://localhost:8081 (ele está no ar?). Tente de novo em instantes."}
-tempo_total=0.005438s
+tempo_total=0.002961s
 
 
-
-# Cardápio lento: aceita a conexão e nunca responde. O Pedidos desiste em 2 s e responde 503.
+# Cardápio lento (simulado). O Cardápio de verdade estava fora (conferido antes); o script
+# ocupou a porta 8081 com um programa de teste em Python (socket) que aceita a
+# conexão e nunca responde. O Pedidos deve desistir em 2 s e responder 503.
 
 $ curl -i -sS -X POST http://localhost:8082/pedidos -H "Content-Type: application/json" --data "@servicos/pedidos/pedido.json" -w '\ntempo_total=%{time_total}s\n'
 HTTP/1.1 503 Service Unavailable
 Content-Type: application/json; charset=utf-8
 Content-Length: 117
-Date: Wed, 07 Oct 2026 01:01:50 GMT
+Date: Wed, 07 Oct 2026 12:20:56 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
 {"codigo":"cardapio_indisponivel","mensagem":"O Cardápio não respondeu em 2 segundos. Tente de novo em instantes."}
-tempo_total=2.005815s
+tempo_total=2.001743s
+
 
