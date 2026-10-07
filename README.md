@@ -126,6 +126,7 @@ Detalhes de cada serviço: [Cardápio](servicos/cardapio/README.md),
 | [`contratos/pedido-confirmado.json`](contratos/pedido-confirmado.json) | Exemplo do evento `cantina.pedido.confirmado`, no envelope CloudEvents 1.0, com `pedidoId` e `totalCentavos` (o formato do enunciado) |
 | [`contratos/pedido-confirmado.schema.json`](contratos/pedido-confirmado.schema.json) | As regras do mesmo evento em JSON Schema 2020-12: atributos obrigatórios do envelope e tipos, `type` sempre `cantina.pedido.confirmado`, `pedidoId` inteiro a partir de 1 e `totalCentavos` inteiro a partir de 0, em centavos. O par `source` + `id` identifica o evento e é o que o Avisos usa para deduplicar |
 | [`contratos/avisos.yaml`](contratos/avisos.yaml) | OpenAPI do Avisos: o `POST /eventos` da Trilha A, com `202` (inclusive para evento repetido e tipo desconhecido), `400` e `413` |
+| [`contratos/catalogo.json`](contratos/catalogo.json) | Catálogo dos serviços, o "portal de APIs" do grupo (veja abaixo) |
 
 Os contratos vieram antes do código. O histórico do Git mostra isso: a tag `entrega-1` tem os três
 primeiros contratos (`cardapio.yaml`, `pedidos.yaml` e `pedido-confirmado.json`), o README e o
@@ -139,6 +140,13 @@ ou 5000 unidades, agora recebe `400`. Isso só afeta pedidos fora do razoável p
 enum de `codigo` também ganhou três valores (`rota_inexistente`, `metodo_nao_permitido` e
 `erro_interno`), usados só fora das rotas do contrato. A 1.1.1 só documentou o limite de 1 MiB do
 corpo, que o código já aplicava.
+
+O **catálogo** (`contratos/catalogo.json`) é a lista dos serviços num lugar só: para cada um, o
+nome, a linguagem, o contrato, a porta padrão, a variável pela qual quem o consome recebe o
+endereço (`CARDAPIO_URL` para o Cardápio, `ASSINANTES` para o Avisos) e a rota de saúde
+(`GET /saude`), e também o evento, com quem publica e quem assina. É um documento para pessoas:
+quem chega no projeto (ou outro grupo, na prova de fogo) descobre ali o que existe e onde. Nenhum
+serviço lê o catálogo; os endereços continuam vindo por variável de ambiente.
 
 Regra do grupo: se o código e o contrato discordam, o código está errado.
 
@@ -204,13 +212,33 @@ O resultado é entrega "pelo menos uma vez" sem aviso duplicado, dentro dos limi
 A estrutura mostra os três serviços, a porta de cada um, os dados que só ele usa, o contrato em
 cada seta e os dois pontos de falha.
 
+![Visão de sequência de um pedido](arquitetura/sequencia.png)
+
+A sequência mostra um pedido do começo ao fim: consulta ao Cardápio, `201`, e o evento indo ao
+Avisos depois da resposta, com os caminhos de erro e de reenvio.
+
 Legenda, fontes `.mmd` e como renderizar de novo: [`arquitetura/README.md`](arquitetura/README.md).
+
+## Matriz de princípios
+
+Princípio sem evidência não conta. Cada linha aponta para um arquivo que dá para abrir.
+
+| Princípio | Onde aparece no nosso código |
+|---|---|
+| **Contrato padronizado** | Os contratos vieram antes do código: a tag `entrega-1` tem três (`cardapio.yaml`, `pedidos.yaml` e `pedido-confirmado.json`) e nenhuma linha de código; o `avisos.yaml` entrou na Entrega 4, num commit anterior ao do código do Avisos. O evento também tem um schema (`contratos/pedido-confirmado.schema.json`). O Pedidos valida a entrada pelo `NovoPedido` do contrato (`servicos/pedidos/server.js`, função `validarNovoPedido`) e responde no formato `Erro` (função `responderErro`). O evento sai no envelope de `contratos/pedido-confirmado.json` (`servicos/pedidos/publicador.js`, função `criarEvento`), e o Avisos confere o envelope (`servicos/avisos/main.go`, função `validarEnvelope`). |
+| **Baixo acoplamento** | O Pedidos conhece o Cardápio só pelo endereço em `CARDAPIO_URL` e os assinantes só por `ASSINANTES` (`servicos/pedidos/server.js`, funções `lerConfiguracao` e `lerAssinantes`). Do Cardápio ele lê só `precoCentavos`, `disponivel` e `nome` e ignora o resto (`servicos/pedidos/cardapio.js`, função `consultarItem`). Evidência: `evidencias/missao4.txt`, Passo 6, um segundo Avisos entra mudando `ASSINANTES` e reiniciando o Pedidos, com o mesmo hash dos `.js`. |
+| **Abstração** | Quem chama vê só o contrato, não o que há por trás. O Cardápio lê `itens.json` (`servicos/cardapio/app.py`, função `carregar_itens`), mas o contrato só fala em `GET /itens/{id}`. As falhas internas do Pedidos viram um código do contrato: `CardapioIndisponivel` (`servicos/pedidos/cardapio.js`) vira `503 cardapio_indisponivel` (`servicos/pedidos/server.js`, função `criarPedido`), e a outbox não aparece em nenhuma resposta. |
+| **Reuso** | O Cardápio atende qualquer consumidor HTTP sem que ninguém copie a regra de preço: o `curl` direto de `evidencias/missao2.txt` e o Pedidos (`evidencias/missao3.txt`, total 2500 calculado com o `precoCentavos` do Cardápio, `servicos/pedidos/cardapio.js`) usam a mesma API, e o Pedidos não guarda preço nenhum. O mesmo programa do Avisos roda como dois assinantes, `avisos` e `avisos-2`, só por configuração (`PORTA` e `NOME`; `servicos/avisos/main.go`, função `main`; `evidencias/missao4.txt`, Passo 6). Dentro do Pedidos, a gravação segura `gravarJson` (`servicos/pedidos/armazenamento.js`) é reusada pela outbox (`servicos/pedidos/outbox.js`). |
+| **Autonomia** | Cada serviço é dono dos seus dados: `servicos/cardapio/itens.json`, `pedidos.json` e `outbox.json` do Pedidos (`servicos/pedidos/armazenamento.js` e `outbox.js`), e os ids do Avisos em memória. Uma falha não derruba o vizinho: com o Avisos fora o pedido sai `201` (`evidencias/missao4.txt`, Passo 2), e com o Cardápio fora o Pedidos responde `503` na hora, e com ele lento em cerca de 2 s (medido: 2,002 s), e segue atendendo (`servicos/pedidos/cardapio.js`, `TEMPO_LIMITE_MS` em `consultarItens`; `evidencias/missao3.txt`). |
+| **Ausência de estado** | O Cardápio não guarda nada sobre quem chama: só o dado de referência `ITENS`, carregado na subida (`servicos/cardapio/app.py`). Por isso as instâncias 8081 e 8091 respondem igual (`evidencias/missao2.txt`). No Pedidos cada requisição traz tudo o que precisa e o estado fica em arquivo, não na conversa: o pedido volta igual em `GET /pedidos/{id}` (`evidencias/missao3.txt`). O Avisos guarda um estado de propósito, os ids já vistos (`servicos/avisos/main.go`, tipo `idsProcessados`), só para não repetir aviso. |
+| **Descoberta** | O catálogo `contratos/catalogo.json` lista os serviços num lugar só: contrato, porta padrão, a variável pela qual o consumidor recebe o endereço (`CARDAPIO_URL`, `ASSINANTES`) e a rota de saúde. Os OpenAPI dizem onde o serviço está (`servers` em `contratos/pedidos.yaml` e `contratos/avisos.yaml`; o `cardapio.yaml` é o padrão da turma e não tem `servers`, então a porta dele está só no catálogo), e os três respondem `GET /saude` (`servicos/cardapio/app.py`, `do_GET`; `servicos/pedidos/server.js`, `tratar`; `servicos/avisos/main.go`, `tratarSaude`). Ao subir, o Pedidos chama o `/saude` do Cardápio e avisa se `CARDAPIO_URL` está errado (`servicos/pedidos/server.js`, função `conferirCardapio`). O catálogo é para pessoas: nenhum serviço o lê, e não há registro automático; o endereço vem por configuração. |
+| **Composição** | O Pedidos é uma composição: consulta o Cardápio em paralelo, item por item (`servicos/pedidos/cardapio.js`, função `consultarItens`, chamada em `criarPedido`), e publica o evento para o Avisos (`servicos/pedidos/publicador.js`, funções `publicar` e `despachar`). Evidência: total 2500 calculado com os preços do Cardápio (`evidencias/missao3.txt`) e o aviso chegando no Avisos (`evidencias/missao4.txt`). |
 
 ## Prova de fogo (Missão 3)
 
 **Pendente: fazer na aula de 19/10.** Apontar `CARDAPIO_URL` para o Cardápio de outro grupo, de
 preferência em outra linguagem, e repetir o `POST /pedidos` sem alterar uma linha do Pedidos.
-Ela vai confirmar na aula o reuso e o baixo acoplamento entre grupos; até lá,
+Ela vai confirmar na aula, entre grupos, o reuso e o baixo acoplamento da matriz acima; até lá,
 ela não conta como evidência.
 
 | Grupo parceiro | Linguagem do Cardápio deles | Resultado |
@@ -265,6 +293,7 @@ cantina-soa/
 │   ├── pedido-confirmado.json
 │   ├── pedido-confirmado.schema.json
 │   ├── avisos.yaml
+│   └── catalogo.json   catálogo dos serviços (o "portal de APIs" do grupo)
 ├── servicos/
 │   ├── cardapio/       Python: app.py e itens.json
 │   ├── pedidos/        Node.js: server.js, cardapio.js, armazenamento.js, outbox.js, publicador.js
@@ -276,7 +305,7 @@ cantina-soa/
 │   └── missao4.sh
 ├── arquitetura/        fontes .mmd e imagens do desenho
 ├── evidencias/         saídas dos scripts de cada missão
-└── README.md           como rodar e trilha de eventos
+└── README.md           como rodar, trilha de eventos e matriz de princípios
 ```
 
 ## Entregas
