@@ -1,11 +1,14 @@
 ---
-title: Cantina SOA · visão de estrutura (Entrega 3 · Pedidos compõe o Cardápio)
+title: Cantina SOA · visão de estrutura (o Pedidos compõe o Cardápio e publica o evento para o Avisos)
 config:
   fontFamily: "Arial, Helvetica, sans-serif"
   flowchart:
     wrappingWidth: 320
+    nodeSpacing: 70
+    rankSpacing: 90
 ---
-%% Entrega 3: o Pedidos está no ar e consulta o Cardápio pelo contrato. O Avisos ainda é planejado.
+%% Versão atual: os três serviços no ar. O evento vai por webhook (Trilha A), sem broker:
+%% o Pedidos faz POST /eventos em cada endereço da variável ASSINANTES.
 flowchart LR
   cliente(["Cliente<br/>curl · app · navegador"])
 
@@ -13,7 +16,9 @@ flowchart LR
     direction TB
     pedidos["Pedidos<br/>valida os itens no Cardápio,<br/>calcula o total e confirma"]
     pedJson[("dados/pedidos.json<br/>só do Pedidos")]
+    outbox[("dados/outbox.json<br/>eventos ainda não entregues<br/>só do Pedidos")]
     pedidos --- pedJson
+    pedidos --- outbox
   end
 
   subgraph CAR["Cardápio · Python 3 · sem estado"]
@@ -25,41 +30,48 @@ flowchart LR
     car2 --- itens
   end
 
-  canal(["Canal de eventos · planejado"])
-  av["Avisos · planejado<br/>Go · porta 8083"]
+  subgraph AVI["Avisos · Go · sem arquivo de dados"]
+    direction TB
+    av1["Avisos<br/>porta 8083 · NOME=avisos<br/>lembra em memória o par<br/>source + id de cada evento já visto"]
+    av2["Avisos, 2º assinante<br/>porta 8084 · NOME=avisos-2<br/>mesmo programa, recebe o mesmo evento;<br/>entra mudando ASSINANTES e<br/>reiniciando o Pedidos, sem mudar código"]
+  end
 
   cliente -->|"pedidos.yaml<br/>POST /pedidos<br/>GET /pedidos/{id}"| pedidos
-  pedidos -.->|"pedido-confirmado.json"| canal
-  canal -.->|"pedido-confirmado.json"| av
   pedidos -->|"cardapio.yaml<br/>GET /itens/{id}<br/>tempo limite de 2 s<br/>endereço vem de<br/>CARDAPIO_URL"| car1
+  %% Os rótulos das duas setas do evento são nós com cara de rótulo: como rótulo de seta,
+  %% o Mermaid desenhava um em cima do outro.
+  rot1["avisos.yaml · POST /eventos<br/>pedido-confirmado.json<br/>(CloudEvents), depois do 201"]
+  rot2["avisos.yaml · POST /eventos<br/>pedido-confirmado.json<br/>o mesmo evento (mesmo id)"]
+  pedidos -.- rot1 -.-> av1
+  pedidos -.- rot2 -.-> av2
 
-  f1["Ponto de falha 1<br/>Cardápio fora ou lento:<br/>503 em até 2 s,<br/>nenhum pedido criado"]
+  f1["Ponto de falha 1<br/>Cardápio fora: 503 na hora.<br/>Cardápio lento: 503 em cerca de 2 s.<br/>Nenhum pedido é criado."]
+  f2["Ponto de falha 2<br/>Avisos fora: o pedido sai 201 mesmo assim.<br/>O evento espera em outbox.json e vai para<br/>cada endereço de ASSINANTES.<br/>202: entregue · 400 ou 413: descartado.<br/>Outra falha: espera REENVIO_MS (padrão 3 s)<br/>depois da tentativa e tenta de novo.<br/>O Avisos ignora um evento que já viu<br/>(mesmo source + id)."]
   CAR ~~~ f1
+  AVI ~~~ f2
 
   subgraph LEG["Legenda"]
     direction LR
     la["quem chama"] -->|"chamada síncrona<br/>HTTP + JSON, espera a resposta"| lb["quem responde"]
     lc["quem publica"] -.->|"evento assíncrono<br/>não espera o consumidor"| ld["quem consome"]
     le["serviço"] --- lf[("dados que<br/>só ele usa")]
-    lp["cinza e tracejado:<br/>planejado, ainda não existe"]
   end
 
   classDef servico fill:#e8f1fb,stroke:#2f6db5,stroke-width:1.5px,color:#13294b
   classDef dados fill:#fff7e0,stroke:#b8860b,color:#4a3700
   classDef externo fill:#f2f2f2,stroke:#555,color:#222
-  classDef planejado fill:#f7f7f7,stroke:#9e9e9e,stroke-dasharray:5 5,color:#757575
   classDef falha fill:#fdecea,stroke:#c0392b,stroke-width:1.5px,color:#7a1d14
   classDef legenda fill:#ffffff,stroke:#999,color:#333
+  classDef rotulo fill:#e8e8e8,stroke:#e8e8e8,color:#333
 
-  class pedidos,car1,car2 servico
-  class pedJson,itens,lf dados
+  class pedidos,car1,car2,av1,av2 servico
+  class pedJson,outbox,itens,lf dados
   class cliente externo
-  class canal,av,lp planejado
-  class f1 falha
+  class f1,f2 falha
   class la,lb,lc,ld,le legenda
+  class rot1,rot2 rotulo
 
-  %% 0 a 2 são dados; 4 e 5 (o evento) ainda são planejadas; 3 e 6 estão no ar.
-  linkStyle 4,5 stroke:#9e9e9e,color:#757575
   style PED fill:#fdf3fd,stroke:#c77dc7
   style CAR fill:#effaf7,stroke:#4fb8a0
+  style AVI fill:#fff4e6,stroke:#e0a040
   style LEG fill:#fafafa,stroke:#bbb
