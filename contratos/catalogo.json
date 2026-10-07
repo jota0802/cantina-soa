@@ -1,0 +1,48 @@
+{
+  "descricao": "Catálogo dos serviços da Cantina: o 'portal de APIs' do grupo. É só um documento para pessoas lerem; nenhum serviço lê este arquivo. Quem consome um serviço recebe o endereço dele pela variável de ambiente em variavelDoConsumidor (null no Pedidos: quem o chama é o cliente, que usa o endereço direto).",
+  "servicos": [
+    {
+      "nome": "Cardápio",
+      "linguagem": "Python 3",
+      "contrato": "contratos/cardapio.yaml",
+      "portaPadrao": 8081,
+      "outrasInstancias": [8091],
+      "variavelDoConsumidor": "CARDAPIO_URL",
+      "exemploDeEndereco": "http://localhost:8081",
+      "saude": "GET /saude",
+      "consumidores": ["Pedidos"]
+    },
+    {
+      "nome": "Pedidos",
+      "linguagem": "Node.js",
+      "contrato": "contratos/pedidos.yaml",
+      "portaPadrao": 8082,
+      "outrasInstancias": [],
+      "variavelDoConsumidor": null,
+      "exemploDeEndereco": "http://localhost:8082",
+      "saude": "GET /saude",
+      "consumidores": ["Cliente (curl, app ou navegador)"]
+    },
+    {
+      "nome": "Avisos",
+      "linguagem": "Go",
+      "contrato": "contratos/avisos.yaml",
+      "portaPadrao": 8083,
+      "outrasInstancias": [8084],
+      "variavelDoConsumidor": "ASSINANTES",
+      "exemploDeEndereco": "http://localhost:8083/eventos",
+      "saude": "GET /saude",
+      "consumidores": ["Pedidos (publica o evento)"]
+    }
+  ],
+  "eventos": [
+    {
+      "tipo": "cantina.pedido.confirmado",
+      "publicador": "Pedidos",
+      "assinantes": ["Avisos"],
+      "exemplo": "contratos/pedido-confirmado.json",
+      "schema": "contratos/pedido-confirmado.schema.json",
+      "entrega": "Trilha A (webhook): POST /eventos em cada endereço de ASSINANTES, com outbox e reenvio no Pedidos e deduplicação por source + id no Avisos"
+    }
+  ]
+}
