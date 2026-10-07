@@ -1,0 +1,9 @@
+# dados gerados em tempo de execução (cada serviço é dono dos seus)
+**/dados/
+node_modules/
+__pycache__/
+*.pyc
+# binário do Avisos
+servicos/avisos/avisos
+servicos/avisos/avisos.exe
+.DS_Store
