@@ -1,0 +1,13 @@
+{
+  "name": "cantina-pedidos",
+  "version": "1.0.0",
+  "description": "Serviço Pedidos da Cantina SOA (só biblioteca padrão do Node.js)",
+  "private": true,
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
