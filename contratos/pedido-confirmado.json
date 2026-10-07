@@ -1,0 +1,9 @@
+{
+  "specversion": "1.0",
+  "id": "b7e2c1a0-0001",
+  "source": "/cantina/pedidos",
+  "type": "cantina.pedido.confirmado",
+  "time": "2026-10-05T12:30:00Z",
+  "datacontenttype": "application/json",
+  "data": { "pedidoId": 1, "totalCentavos": 2500 }
+}
