@@ -6,6 +6,8 @@ const dns = require('node:dns');
 const path = require('node:path');
 const cardapio = require('./cardapio');
 const armazenamento = require('./armazenamento');
+const outbox = require('./outbox');
+const publicador = require('./publicador');
 
 const TAMANHO_MAXIMO_CORPO = 1024 * 1024; // 1 MiB
 // Limites do contrato (NovoPedido): cada item vira uma chamada ao Cardápio, e o total
@@ -13,7 +15,15 @@ const TAMANHO_MAXIMO_CORPO = 1024 * 1024; // 1 MiB
 const MAXIMO_ITENS = 20;
 const MAXIMO_QUANTIDADE = 1000;
 
-// No Node 18, "localhost" pode virar ::1 primeiro, e o Cardápio escuta só em 127.0.0.1.
+// Os nossos serviços (Cardápio e Avisos) escutam em IPv4 e IPv6 no mesmo socket quando o
+// sistema suporta (o comum hoje em macOS, Linux e Windows); senão, só em IPv4. Nos dois casos
+// 127.0.0.1 funciona, então para eles esta linha não atrapalha.
+// A linha fica por causa dos serviços dos OUTROS grupos: o Cardápio da prova de fogo ou um
+// assinante em ASSINANTES pode escutar só em 127.0.0.1 (o padrão de Flask, uvicorn e de muitos
+// exemplos). No macOS e em vários Linux, "localhost" resolve primeiro para ::1. O Node 20 ou
+// mais novo tenta ::1 e 127.0.0.1 (autoSelectFamily) e acha o servidor; o Node 18, que o
+// projeto ainda aceita, tenta só o primeiro endereço e falha com ECONNREFUSED ::1. Pondo IPv4
+// primeiro, "localhost" funciona igual nas duas versões.
 dns.setDefaultResultOrder('ipv4first');
 
 function sair(mensagem) {
@@ -52,7 +62,48 @@ function lerConfiguracao() {
     // Aceita com ou sem barra no fim: "http://localhost:8081/" vira "http://localhost:8081".
     cardapioUrl: cardapioTexto.replace(/\/+$/, ''),
     dadosDir: process.env.DADOS_DIR || path.join(__dirname, 'dados'),
+    assinantes: lerAssinantes(),
+    reenvioMs: lerReenvioMs(),
   };
+}
+
+// ASSINANTES: endereços que recebem o evento, separados por vírgula, como
+// "http://localhost:8083/eventos,http://localhost:8084/eventos". Vazia: não publica nada.
+function lerAssinantes() {
+  const texto = process.env.ASSINANTES || '';
+  const assinantes = [];
+  for (const parte of texto.split(',')) {
+    const endereco = parte.trim();
+    if (endereco === '') continue;
+    let url;
+    try {
+      url = new URL(endereco);
+    } catch {
+      url = null;
+    }
+    if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
+      sair(`ASSINANTES deve ter endereços http separados por vírgula, como http://localhost:8083/eventos. Não entendi '${endereco}'.`);
+    }
+    // O mesmo endereço duas vezes receberia o evento duas vezes; basta uma.
+    if (!assinantes.includes(endereco)) {
+      assinantes.push(endereco);
+    }
+  }
+  return assinantes;
+}
+
+// REENVIO_MS: quanto esperar depois de uma tentativa de entrega que falhou, contando do fim
+// dela, antes da próxima (padrão 3000). Não é um relógio fixo: uma tentativa que estoura o
+// tempo limite de 2 s deixa o intervalo entre o começo de uma e o da outra em ~5 s.
+function lerReenvioMs() {
+  const texto = process.env.REENVIO_MS;
+  if (texto === undefined || texto === '') {
+    return 3000;
+  }
+  if (!/^[0-9]+$/.test(texto) || Number(texto) < 100) {
+    sair(`REENVIO_MS precisa ser um número inteiro de milissegundos, 100 ou mais, recebi '${texto}'.`);
+  }
+  return Number(texto);
 }
 
 const config = lerConfiguracao();
@@ -186,7 +237,18 @@ async function criarPedido(req, res) {
 
   // Só aqui o pedido passa a existir (e o id é consumido): todos os itens foram aprovados.
   const pedido = armazenamento.gravar(itens, totalCentavos);
+
+  // Evento cantina.pedido.confirmado: grava na outbox (rápido, sem rede) e responde 201.
+  // A entrega aos assinantes acontece depois, em segundo plano, e nunca atrasa o pedido.
+  let entregas = [];
+  try {
+    entregas = publicador.publicar(pedido);
+  } catch (erro) {
+    // O pedido já está confirmado e gravado; um problema na outbox não pode desfazer isso.
+    console.error(`[pedidos:${config.porta}] não foi possível gravar o evento do pedido ${pedido.id} na outbox:`, erro);
+  }
   responder(res, 201, pedido, { Location: `/pedidos/${pedido.id}` });
+  entregas.forEach(publicador.despachar);
 }
 
 // ---------- GET /pedidos/{id} ----------
@@ -241,11 +303,19 @@ const servidor = http.createServer((req, res) => {
 // ---------- início e fim ----------
 
 let arquivoDados;
+let arquivoOutbox;
 try {
   arquivoDados = armazenamento.abrir(config.dadosDir);
+  arquivoOutbox = outbox.abrir(config.dadosDir);
 } catch (erro) {
   sair(`não foi possível abrir os dados em ${config.dadosDir}: ${erro.message}`);
 }
+
+publicador.configurar({
+  assinantes: config.assinantes,
+  reenvioMs: config.reenvioMs,
+  prefixoLog: `[pedidos:${config.porta}]`,
+});
 
 servidor.on('error', (erro) => {
   if (erro.code === 'EADDRINUSE') {
@@ -258,6 +328,17 @@ servidor.listen(config.porta, () => {
   console.log(`Pedidos no ar em http://localhost:${config.porta}`);
   console.log(`  Cardápio: ${config.cardapioUrl}`);
   console.log(`  Dados: ${arquivoDados} (${armazenamento.quantidade()} pedidos salvos)`);
+  if (config.assinantes.length > 0) {
+    console.log(`  Assinantes do evento cantina.pedido.confirmado: ${config.assinantes.join(', ')}`);
+  } else {
+    console.log('  ASSINANTES vazio: nenhum evento será publicado.');
+  }
+
+  // Entregas que ficaram pendentes antes de o Pedidos parar: retoma agora.
+  const pendentes = outbox.pendentes();
+  console.log(`  Outbox: ${arquivoOutbox} (${pendentes.length} entregas pendentes)`);
+  pendentes.forEach(publicador.despachar);
+
   conferirCardapio();
 });
 
@@ -276,6 +357,8 @@ async function conferirCardapio() {
 }
 
 // Ctrl+C (SIGINT) ou SIGTERM. A gravação é síncrona, então não há pedido pela metade.
+// Uma entrega em andamento fica na outbox e é refeita na próxima subida (o assinante
+// deduplica pelo par source + id do evento).
 function encerrar() {
   console.log('\nPedidos encerrado.');
   process.exit(0);

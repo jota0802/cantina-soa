@@ -29,14 +29,17 @@ function gravar(itens, totalCentavos) {
   const ultimoId = pedidos.length > 0 ? pedidos[pedidos.length - 1].id : 0;
   const pedido = { id: ultimoId + 1, itens, totalCentavos, status: 'confirmado' };
   const novaLista = [...pedidos, pedido];
-
-  // Escreve num .tmp e renomeia: se o processo cair no meio, o arquivo antigo continua inteiro.
-  const temporario = arquivo + '.tmp';
-  fs.writeFileSync(temporario, JSON.stringify(novaLista, null, 2) + '\n', 'utf8');
-  fs.renameSync(temporario, arquivo);
-
+  gravarJson(arquivo, novaLista);
   pedidos = novaLista;
   return pedido;
 }
 
-module.exports = { abrir, quantidade, buscar, gravar };
+// Escreve num .tmp e renomeia: se o processo cair no meio, o arquivo antigo continua inteiro.
+// A outbox (outbox.js) grava do mesmo jeito.
+function gravarJson(caminho, dados) {
+  const temporario = caminho + '.tmp';
+  fs.writeFileSync(temporario, JSON.stringify(dados, null, 2) + '\n', 'utf8');
+  fs.renameSync(temporario, caminho);
+}
+
+module.exports = { abrir, quantidade, buscar, gravar, gravarJson };
