@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Pedidos
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Registra os pedidos da Cantina. O Pedidos não guarda preço nem
     disponibilidade: para cada item ele consulta o serviço Cardápio
@@ -58,7 +58,7 @@ paths:
                 totalCentavos: 2500
                 status: confirmado
         '400':
-          description: Corpo da requisição fora do formato (JSON inválido, lista vazia, quantidade menor que 1)
+          description: Corpo da requisição fora do formato (JSON inválido, lista vazia ou com mais de 20 itens, quantidade fora de 1 a 1000)
           content:
             application/json:
               schema:
@@ -137,6 +137,7 @@ components:
         quantidade:
           type: integer
           minimum: 1
+          maximum: 1000
     NovoPedido:
       type: object
       required: [itens]
@@ -144,6 +145,7 @@ components:
         itens:
           type: array
           minItems: 1
+          maxItems: 20
           items:
             $ref: '#/components/schemas/ItemPedido'
     Pedido:
@@ -168,7 +170,11 @@ components:
       properties:
         codigo:
           type: string
-          enum: [requisicao_invalida, item_inexistente, item_indisponivel, cardapio_indisponivel, pedido_inexistente]
+          enum: [requisicao_invalida, item_inexistente, item_indisponivel, cardapio_indisponivel, pedido_inexistente,
+                 rota_inexistente, metodo_nao_permitido, erro_interno]
+          description: |
+            Os três últimos ficam fora das rotas do contrato: rota_inexistente (404 em um caminho
+            que não existe), metodo_nao_permitido (405, com o header Allow) e erro_interno (500).
         mensagem:
           type: string
           description: Texto para quem chamou entender o que aconteceu
