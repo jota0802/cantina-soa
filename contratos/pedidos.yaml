@@ -1,0 +1,177 @@
+openapi: 3.0.3
+info:
+  title: Pedidos
+  version: 1.0.0
+  description: |
+    Registra os pedidos da Cantina. O Pedidos não guarda preço nem
+    disponibilidade: para cada item ele consulta o serviço Cardápio
+    (contrato em `cardapio.yaml`) e calcula o total com o preço informado.
+
+    Quando um pedido é confirmado, o Pedidos publica o evento
+    `cantina.pedido.confirmado` no envelope CloudEvents descrito em
+    `pedido-confirmado.json`. A publicação não altera a resposta do
+    `POST /pedidos`: o pedido é confirmado mesmo que nenhum consumidor
+    esteja no ar.
+
+    Valores em dinheiro são inteiros em centavos (2500 = R$ 25,00).
+servers:
+  - url: http://localhost:8082
+    description: Porta usada nos testes (variável PORTA)
+paths:
+  /pedidos:
+    post:
+      operationId: criarPedido
+      summary: Cria um pedido
+      description: |
+        Valida cada item no Cardápio (o item precisa existir e estar
+        disponível) e calcula `totalCentavos` como a soma de
+        `precoCentavos × quantidade`. Se algum item falhar, nenhum
+        pedido é criado. A consulta ao Cardápio tem tempo limite de
+        2 segundos.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NovoPedido'
+            example:
+              itens:
+                - { itemId: 1, quantidade: 2 }
+                - { itemId: 3, quantidade: 1 }
+      responses:
+        '201':
+          description: Pedido criado e confirmado
+          headers:
+            Location:
+              description: Endereço do pedido criado, como `/pedidos/1`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+              example:
+                id: 1
+                itens:
+                  - { itemId: 1, quantidade: 2 }
+                  - { itemId: 3, quantidade: 1 }
+                totalCentavos: 2500
+                status: confirmado
+        '400':
+          description: Corpo da requisição fora do formato (JSON inválido, lista vazia, quantidade menor que 1)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                codigo: requisicao_invalida
+                mensagem: "itens deve ser uma lista com pelo menos um item"
+        '422':
+          description: Item inexistente ou indisponível no Cardápio. Nenhum pedido é criado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              examples:
+                inexistente:
+                  value:
+                    codigo: item_inexistente
+                    mensagem: "O item 99 não existe no cardápio"
+                    itemId: 99
+                indisponivel:
+                  value:
+                    codigo: item_indisponivel
+                    mensagem: "O item 4 (Bolo de cenoura) está indisponível"
+                    itemId: 4
+        '503':
+          description: O Cardápio não respondeu em até 2 segundos ou está fora do ar. Nenhum pedido é criado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                codigo: cardapio_indisponivel
+                mensagem: "O Cardápio não respondeu em 2 segundos. Tente de novo em instantes."
+  /pedidos/{id}:
+    get:
+      operationId: consultarPedido
+      summary: Consulta um pedido
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Pedido encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        '404':
+          description: Pedido não existe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                codigo: pedido_inexistente
+                mensagem: "O pedido 42 não existe"
+  /saude:
+    get:
+      operationId: saude
+      summary: Verificação de saúde
+      responses:
+        '200':
+          description: Serviço no ar
+components:
+  schemas:
+    ItemPedido:
+      type: object
+      required: [itemId, quantidade]
+      properties:
+        itemId:
+          type: integer
+          description: O `id` do item no Cardápio
+        quantidade:
+          type: integer
+          minimum: 1
+    NovoPedido:
+      type: object
+      required: [itens]
+      properties:
+        itens:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ItemPedido'
+    Pedido:
+      type: object
+      required: [id, itens, totalCentavos, status]
+      properties:
+        id:
+          type: integer
+        itens:
+          type: array
+          items:
+            $ref: '#/components/schemas/ItemPedido'
+        totalCentavos:
+          type: integer
+          description: Soma de precoCentavos × quantidade, com o preço informado pelo Cardápio
+        status:
+          type: string
+          enum: [confirmado]
+    Erro:
+      type: object
+      required: [codigo, mensagem]
+      properties:
+        codigo:
+          type: string
+          enum: [requisicao_invalida, item_inexistente, item_indisponivel, cardapio_indisponivel, pedido_inexistente]
+        mensagem:
+          type: string
+          description: Texto para quem chamou entender o que aconteceu
+        itemId:
+          type: integer
+          description: O item que causou o erro, quando houver
