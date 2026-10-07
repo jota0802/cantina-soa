@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Pedidos
-  version: 1.1.0
+  version: 1.1.1
   description: |
     Registra os pedidos da Cantina. O Pedidos não guarda preço nem
     disponibilidade: para cada item ele consulta o serviço Cardápio
@@ -58,7 +58,7 @@ paths:
                 totalCentavos: 2500
                 status: confirmado
         '400':
-          description: Corpo da requisição fora do formato (JSON inválido, lista vazia ou com mais de 20 itens, quantidade fora de 1 a 1000)
+          description: Corpo da requisição fora do formato (JSON inválido, corpo maior que 1 MiB, lista vazia ou com mais de 20 itens, quantidade fora de 1 a 1000)
           content:
             application/json:
               schema:
