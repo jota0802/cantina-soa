@@ -45,8 +45,10 @@ $env:PORTA = "8091"; python app.py
 Cada requisição gera uma linha no terminal, como `[cardapio:8081] GET /itens/1 -> 200`.
 Para parar, `Ctrl+C`.
 
-O serviço escuta em todas as interfaces, em IPv4 e IPv6. Por isso `localhost`, `127.0.0.1`
-e o IP da máquina na rede (útil para a prova de fogo da Missão 3) funcionam.
+O serviço escuta em todas as interfaces, em IPv4 e IPv6 quando o sistema aceita os dois no
+mesmo socket (`socket.has_dualstack_ipv6()`, o comum no macOS, no Linux e no Windows atuais);
+senão, só em IPv4. Por isso `localhost`, `127.0.0.1` e o IP da máquina na rede (útil para a
+prova de fogo da Missão 3) funcionam.
 
 ## Verificação (Missão 2)
 
