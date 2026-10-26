@@ -247,6 +247,10 @@ ela não conta como evidência.
 
 ## Demonstração
 
+**▶ [Vídeo de 51 s da demonstração](evidencias/demonstracao.mp4)**: este roteiro rodando de verdade,
+os três serviços e o cliente em quatro painéis, do primeiro pedido até o Avisos voltar e receber o
+segundo.
+
 Roteiro para o vídeo ou a apresentação, em bash, na raiz do repositório, um serviço por terminal
 (assim dá para derrubar só o Avisos com `Ctrl+C`):
 
